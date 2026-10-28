@@ -12,8 +12,8 @@ import {
   PLAINTEXT_V2_AGENT_MESSAGE_RESTORE_OVERFLOW_MESSAGE,
   PLAINTEXT_V2_COLLABORATION_NAMESPACE,
 } from "../../src/responses/plaintext-v2-agent-messages";
-import { clearResponseStateForTests, expandPreviousResponseInput } from "../../src/responses/state";
-import { handleResponses } from "../../src/server/responses";
+import { clearResponseStateForTests } from "../../src/responses/state";
+import { handleOwnedResponses as handleResponses, expandOwnedResponseInput as expandPreviousResponseInput } from "../helpers/response-replay-owner";
 import type { OcxConfig } from "../../src/types";
 import { acquireOwnedSpendHome } from "../helpers/owned-spend-home";
 import { removeTreeWithRetry } from "../helpers/remove-tree";

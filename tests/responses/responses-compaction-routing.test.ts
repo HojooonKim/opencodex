@@ -1,3 +1,4 @@
+import { handleOwnedResponses } from "../helpers/response-replay-owner";
 import { getAccountQuotaHistory } from "../../src/codex/quota";
 import { clearComboSelectionState, clearComboTargetCooldowns } from "../../src/combos";
 import { sessionLaneIdFromRequest } from "../../src/server/request-log-conversation";
@@ -2427,7 +2428,7 @@ describe("established-history external task input (#3807)", () => {
   test("stored-ID continuation replays the established tool pair and inter-task delivery in order", async () => {
     const captured = captureChat(acknowledged);
     const config = keyProviderConfig({ adapter: "openai-chat" });
-    const first = await handleResponses(compactionRequest({ ...requestBody(), store: true }),
+    const first = await handleOwnedResponses(compactionRequest({ ...requestBody(), store: true }),
       config, { model: "", provider: "" });
     expect(first.status).toBe(200);
     const saved = await first.json() as { id: string; status?: string };
@@ -2438,7 +2439,7 @@ describe("established-history external task input (#3807)", () => {
     expectHistory(captured[0]!);
 
     // Send only the new user turn: the handler must retrieve the previous raw history.
-    const res = await handleResponses(compactionRequest({
+    const res = await handleOwnedResponses(compactionRequest({
       ...requestBody(), previous_response_id: saved.id,
       input: [{ type: "message", role: "user", content: continuationText }],
     }), config, { model: "", provider: "" });

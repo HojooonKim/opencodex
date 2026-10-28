@@ -1,4 +1,6 @@
 {
+  "response-replay-ownership.test.ts": "server",
+  "responses-replay-owner-storage.test.ts": "responses",
   "passthrough-media-type.test.ts": "responses",
   "passthrough-override.test.ts": "responses",
   "passthrough-headers.test.ts": "responses",

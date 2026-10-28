@@ -1,3 +1,4 @@
+import { responseReplayOwnerKey } from "../../responses/state/replay-owner";
 import { effectiveAzureOutputBudget } from "../../adapters/azure";
 import { resolveWireProtocolOverride } from "../adapter-resolve";
 import { comboCooldownRetryAfterSeconds, type CodexAccountModelRefusal } from "../../combos/failover";
@@ -423,7 +424,9 @@ export async function executeComboResponses(
   // continuation that only references prior images still fails closed when
   // imageInput is disabled (and so targets see the full replayed input).
   const inboundClientThreadId = req.headers.get("x-codex-parent-thread-id")?.trim() || undefined;
-  const body = expandPreviousResponseInput(rawBody, inboundClientThreadId);
+  const inboundOwnThreadId = req.headers.get("thread-id")?.trim() || undefined;
+  const replayOwnerKey = responseReplayOwnerKey(replayPrincipal.clientPrincipalId, inboundOwnThreadId);
+  const body = expandPreviousResponseInput(rawBody, inboundOwnThreadId, replayOwnerKey);
   const replayFailure = previousResponseReplayFailure(body);
   if (replayFailure?.reason === "scope_mismatch") {
     console.warn("[opencodex] refusing continuation because the client task scope does not match replay state");
