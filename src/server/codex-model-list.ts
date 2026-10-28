@@ -1,4 +1,5 @@
 import { websocketsEnabled } from "../config";
+import { resolveMultiAgentMode } from "../config/multi-agent-surface";
 import type { OcxConfig } from "../types";
 import { buildCatalogEntries } from "../codex/catalog/build-entries";
 import { loadCatalogTemplate } from "../codex/catalog/bundled";
@@ -30,7 +31,7 @@ export function buildCodexModelList({
     baseline: readNativeBaseline(catalogPath),
     retainedBySlug: retainedNativeSourcePriorities(readCatalog(catalogPath)?.models ?? []),
   };
-  const maMode = config.multiAgentMode === "v1" || config.multiAgentMode === "v2" ? config.multiAgentMode : "default";
+  const maMode = resolveMultiAgentMode(config);
   // Account rows include hidden supported ids so newly re-enabled natives reappear before sync.
   const catalogNativeSlugs = accountSelectors.length > 0
     ? [...new Set([...availableAccountNativeSlugs, ...accountNativeSlugs])]
