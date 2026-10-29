@@ -445,9 +445,9 @@ export async function executeComboResponses(
   // object (still carrying previous_response_id) and must not be treated as
   // unresolved — text-only stored continuations remain allowed.
   const requestedPreviousId = typeof (rawBody as { previous_response_id?: unknown } | null)?.previous_response_id === "string"
-    ? (rawBody as { previous_response_id: string }).previous_response_id.trim()
+    ? (rawBody as { previous_response_id: string }).previous_response_id
     : "";
-  const unresolvedPrevious = requestedPreviousId.length > 0 && body === rawBody;
+  const unresolvedPrevious = requestedPreviousId.trim().length > 0 && body === rawBody;
   if (combo.imageInput === "disabled" && unresolvedPrevious) {
     return formatErrorResponse(
       400,
