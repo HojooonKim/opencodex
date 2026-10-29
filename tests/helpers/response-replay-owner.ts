@@ -6,6 +6,10 @@ import { contextPrincipalIdOf, resolveDataPlaneAdmissionSecret } from "../../src
 const key = "synthetic-response-replay-owner";
 const thread = "synthetic-response-replay-thread";
 const apiKeys = [{ id: "replay-fixture", key }];
+export const responseReplayFixtureApiKeys = apiKeys;
+export function responseReplayFixtureHeaders(ownThread = thread) {
+  return { "x-opencodex-api-key": key, "thread-id": ownThread };
+}
 
 /** Direct-handler fixtures take the same configured admission that ingress would resolve. */
 export function handleOwnedResponses(...[req, config, log, options]: Parameters<typeof handleResponses>) {
