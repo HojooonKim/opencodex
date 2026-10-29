@@ -1,11 +1,11 @@
 import { websocketsEnabled } from "../config";
-import { resolveMultiAgentMode } from "../config/multi-agent-surface";
 import type { OcxConfig } from "../types";
 import { buildCatalogEntries } from "../codex/catalog/build-entries";
 import { loadCatalogTemplate } from "../codex/catalog/bundled";
 import { applyNativeVisibility, nativeContextLimits } from "../codex/catalog/metadata";
 import { readCatalog, readCodexCatalogPath, type CatalogModel } from "../codex/catalog/parsing";
 import { readNativeBaseline, retainedNativeSourcePriorities } from "../codex/catalog/native-priority";
+import { resolveMultiAgentMode } from "../config/multi-agent-surface";
 
 interface CodexModelListInput {
   config: OcxConfig;
