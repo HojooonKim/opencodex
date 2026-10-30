@@ -528,12 +528,13 @@ export function staleActiveUpdateJobReason(
 }
 
 /**
- * Status read that settles an active record whose worker is gone (#7967). A worker killed with
- * its service cgroup never writes a terminal state, and the record stayed `running` until the
- * next update attempt recovered it. The record is re-read right before the write so one
- * replaced or advanced meanwhile is returned as is, never overwritten.
+ * Status view of an active record whose worker is gone (#7967). A worker killed with its service
+ * cgroup never writes a terminal state, so the persisted record stays `running`. The view reports
+ * it as `failed` with the reason so the dashboard stops waiting, without writing: the persisted
+ * record is settled only by the next run's existing stale recovery, which holds the start path,
+ * so a status poll can never overwrite a job another process started meanwhile.
  */
-export function readUpdateJobSettlingStale(
+export function readUpdateJobForStatus(
   jobId?: string | null,
   now = Date.now(),
   isAlive: (pid: number) => boolean = isProcessAlive,
@@ -542,15 +543,8 @@ export function readUpdateJobSettlingStale(
   if (!job) return null;
   const reason = staleActiveUpdateJobReason(job, now, isAlive);
   if (!reason) return job;
-  const current = readUpdateJob(jobId);
-  if (!current || current.id !== job.id || current.pid !== job.pid || current.status !== job.status) return current;
-  // Built from the record just compared, not via updateJob: its by-id re-read falls back to the
-  // caller's copy when the record was replaced, which would write this job over the new one.
   const line = `Update worker stopped before finishing: ${reason}.`;
-  const next: UpdateJobState = { ...current, status: "failed", error: line, exitCode: null,
-    updatedAt: new Date(now).toISOString(), log: [...current.log, line] };
-  writeJob(next);
-  return next;
+  return { ...job, status: "failed", error: line, exitCode: null, log: [...job.log, line] };
 }
 
 /**

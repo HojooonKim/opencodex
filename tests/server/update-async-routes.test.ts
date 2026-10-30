@@ -101,51 +101,26 @@ describe("dashboard update restart supervision (#7967)", () => {
     }
   });
 
-  test("status settles an active job whose worker died", async () => {
+  test("status reports an active job whose worker died as failed, without writing", async () => {
     const home = mkdtempSync(join(tmpdir(), "ocx-update-status-"));
     const previous = process.env.OPENCODEX_HOME;
     process.env.OPENCODEX_HOME = home;
     try {
       const now = new Date().toISOString();
       mkdirSync(dirname(updateJobPath()), { recursive: true });
-      writeFileSync(updateJobPath(), JSON.stringify({
+      const persisted = JSON.stringify({
         id: "dead-worker", status: "restarting", startedAt: now, updatedAt: now, pid: 2147483646,
         currentVersion: "2.7.43", latestVersion: "2.7.44", channel: "latest", installer: "npm",
         restart: true, command: "", releaseNotesUrl: "", log: [],
-      }));
+      });
+      writeFileSync(updateJobPath(), persisted);
       const response = await call("GET", "/api/update/status?jobId=dead-worker");
       expect(response?.status).toBe(200);
       const body = await response!.json() as { job: { status: string; error?: string } };
       expect(body.job.status).toBe("failed");
       expect(body.job.error).toContain("is no longer running");
-      expect(JSON.parse(readFileSync(updateJobPath(), "utf8")).status).toBe("failed");
-    } finally {
-      if (previous === undefined) delete process.env.OPENCODEX_HOME; else process.env.OPENCODEX_HOME = previous;
-      removeTreeWithRetry(home);
-    }
-  });
-
-  test("settling never overwrites a record replaced after the stale check", async () => {
-    const home = mkdtempSync(join(tmpdir(), "ocx-update-settle-race-"));
-    const previous = process.env.OPENCODEX_HOME;
-    process.env.OPENCODEX_HOME = home;
-    try {
-      const now = new Date().toISOString();
-      const record = (id: string, pid: number) => ({
-        id, status: "running", startedAt: now, updatedAt: now, pid,
-        currentVersion: "2.7.43", latestVersion: "2.7.44", channel: "latest", installer: "npm",
-        restart: true, command: "", releaseNotesUrl: "", log: [],
-      });
-      mkdirSync(dirname(updateJobPath()), { recursive: true });
-      writeFileSync(updateJobPath(), JSON.stringify(record("old-job", 2147483646)));
-      const replacement = JSON.stringify(record("new-job", process.pid));
-      // A new run lands between the stale observation and the write.
-      const settled = updateJobModule.readUpdateJobSettlingStale(null, Date.now(), () => {
-        writeFileSync(updateJobPath(), replacement);
-        return false;
-      });
-      expect(settled?.id).toBe("new-job");
-      expect(readFileSync(updateJobPath(), "utf8")).toBe(replacement);
+      // The next run settles the record under its own start path; a poll never writes it.
+      expect(readFileSync(updateJobPath(), "utf8")).toBe(persisted);
     } finally {
       if (previous === undefined) delete process.env.OPENCODEX_HOME; else process.env.OPENCODEX_HOME = previous;
       removeTreeWithRetry(home);

@@ -997,8 +997,8 @@ async function handleConfigRoutesImpl(ctx: ManagementContext): Promise<Response 
   }
 
   if (url.pathname === "/api/update/status" && req.method === "GET") {
-    const { readUpdateJobSettlingStale } = await import("../../update/job");
-    const job = readUpdateJobSettlingStale(url.searchParams.get("jobId"));
+    const { readUpdateJobForStatus } = await import("../../update/job");
+    const job = readUpdateJobForStatus(url.searchParams.get("jobId"));
     if (!job) return jsonResponse({ error: "update job not found" }, 404);
     return jsonResponse({ ok: true, job });
   }
