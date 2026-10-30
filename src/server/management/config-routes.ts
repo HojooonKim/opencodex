@@ -980,9 +980,13 @@ async function handleConfigRoutesImpl(ctx: ManagementContext): Promise<Response 
       // Refuse before any package mutation, with or without restart: the update stops the proxy
       // first, so a worker that dies with the service cgroup, or a restart aimed at a unit that
       // does not own this proxy, leaves the dashboard down (#7967).
-      const { TASK } = await import("../../service/state");
-      const refusal = (deps.dashboardRestartRefusal ?? dashboardRestartRefusal)({ systemdRun, unitName: TASK });
-      if (refusal) return jsonResponse({ error: refusal, code: "update_restart_unsupervised" }, 409);
+      // Only an update that would actually run is refused; an unavailable update or a source
+      // checkout keeps its own refusal from startUpdateJob.
+      if (checked.canUpdate) {
+        const { TASK } = await import("../../service/state");
+        const refusal = (deps.dashboardRestartRefusal ?? dashboardRestartRefusal)({ systemdRun, unitName: TASK });
+        if (refusal) return jsonResponse({ error: refusal, code: "update_restart_unsupervised" }, 409);
+      }
       return jsonResponse({ ok: true, job: startUpdateJob(channel, restart, {
         checkForUpdateFn: () => checked,
         spawnWorkerFn: (jobId, runChannel, runRestart) =>

@@ -276,6 +276,9 @@ describe("dashboard restart supervisor check", () => {
   test("outside systemd or off Linux nothing changes", () => {
     const unread = () => { throw new Error("must not read the cgroup"); };
     expect(dashboardRestartRefusal({ ...base, env: {}, systemdRun: undefined, readCgroup: () => "0::/user.slice/user-1000.slice/session-3.scope\n" })).toBeNull();
+    // A desktop terminal runs in a scope below the per-user manager: not a service.
+    expect(dashboardRestartRefusal({ ...base, env: {}, systemdRun: undefined, readCgroup: () => `0::/user.slice/user-1000.slice/${manager}/app.slice/app-org.gnome.Terminal.slice/vte-spawn-1.scope\n` })).toBeNull();
+    expect(dashboardRestartRefusal({ ...base, env: {}, systemdRun: undefined, readCgroup: () => `0::/user.slice/user-1000.slice/${manager}/init.scope\n` })).toBeNull();
     expect(dashboardRestartRefusal({ ...base, env: {}, systemdRun: undefined, readCgroup: () => { throw new Error("no proc"); } })).toBeNull();
     expect(dashboardRestartRefusal({ ...base, platform: "darwin", systemdRun: undefined, readCgroup: unread })).toBeNull();
   });

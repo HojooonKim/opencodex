@@ -63,7 +63,11 @@ describe("asynchronous package update routes", () => {
   });
 
   test("source checkout run rejects a worker", async () => {
-    const response = await call("POST", "/api/update/run", { tag: "latest", restart: false });
+    // The supervisor check must not preempt the checkout's own refusal, even when the test
+    // process itself runs inside a systemd service (a CI runner, for example).
+    const response = await call("POST", "/api/update/run", { tag: "latest", restart: false }, {
+      dashboardRestartRefusal: () => "must not be consulted",
+    });
     expect(response?.status).toBe(409);
     const body = await response!.json() as Record<string, unknown>;
     expect(body.code).toBe("source_checkout");

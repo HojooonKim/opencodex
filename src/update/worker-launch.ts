@@ -182,7 +182,20 @@ export interface DashboardRestartContext {
 }
 
 function cgroupPaths(cgroup: string): string[] {
-  return cgroup.split("\n").map(line => line.slice(line.lastIndexOf(":") + 1).trim()).filter(Boolean);
+  const rows = cgroup.split("\n").map(line => line.split(":")).filter(parts => parts.length >= 3);
+  // cgroup v2 ("0::") or the v1 systemd hierarchy name the unit; controller lines are noise.
+  const unified = rows.filter(parts => parts[1] === "" || parts[1] === "name=systemd");
+  return (unified.length > 0 ? unified : rows).map(parts => parts.slice(2).join(":").trim()).filter(Boolean);
+}
+
+/** The innermost systemd unit named by a cgroup path: its last `.service` or `.scope` component. */
+function innermostUnit(path: string): { unit: string; index: number; parts: string[] } | null {
+  const parts = path.split("/");
+  for (let index = parts.length - 1; index >= 0; index--) {
+    const part = parts[index]!;
+    if (part.endsWith(".service") || part.endsWith(".scope")) return { unit: part, index, parts };
+  }
+  return null;
 }
 
 /**
@@ -205,17 +218,19 @@ export function dashboardRestartRefusal(context: DashboardRestartContext): strin
   try { cgroup = (context.readCgroup ?? (() => readFileSync("/proc/self/cgroup", "utf8")))(); }
   catch { cgroup = null; }
   const paths = cgroup === null ? [] : cgroupPaths(cgroup);
-  const inService = Boolean(env.INVOCATION_ID) || paths.some(path => path.split("/").some(part => part.endsWith(".service")));
+  // The innermost unit decides: a terminal or app scope below the per-user manager
+  // (user@<uid>.service/app.slice/vte-spawn-1.scope) is not a service; a system or user service is.
+  const units: ReturnType<typeof innermostUnit>[] = paths.map(innermostUnit);
+  const inService = Boolean(env.INVOCATION_ID)
+    || units.some(found => found !== null && found.unit.endsWith(".service") && !found.unit.startsWith("user@"));
   if (!inService) return null;
   const manual = "Stop the service with its own manager, update the package from a shell (for example `ocx update`), then start the service again.";
   if (!context.systemdRun || !env.INVOCATION_ID) {
     return `Dashboard update is unavailable: this proxy runs inside a systemd service, and the update worker cannot leave the service's cgroup (no usable \`systemd-run --user --scope\`), so stopping the proxy for the update would stop the update too. ${manual}`;
   }
-  const managedByOwnUnit = paths.some(path => {
-    const parts = path.split("/");
-    const unit = parts.indexOf(`${context.unitName}.service`);
-    return unit > 0 && parts.slice(0, unit).some(part => part.startsWith("user@") && part.endsWith(".service"));
-  });
+  const ownUnit = `${context.unitName}.service`;
+  const managedByOwnUnit = units.some((found): boolean => found !== null && found.unit === ownUnit
+    && found.parts.slice(0, found.index).some((part: string) => part.startsWith("user@") && part.endsWith(".service")));
   if (!managedByOwnUnit) {
     return `Dashboard update is unavailable: this proxy runs under a systemd unit that is not OpenCodex's own \`${context.unitName}.service\` user unit, so the updater can neither keep its worker alive nor restart that unit safely. ${manual}`;
   }
