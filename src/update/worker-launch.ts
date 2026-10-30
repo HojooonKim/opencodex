@@ -181,33 +181,43 @@ export interface DashboardRestartContext {
   readCgroup?: () => string;
 }
 
+function cgroupPaths(cgroup: string): string[] {
+  return cgroup.split("\n").map(line => line.slice(line.lastIndexOf(":") + 1).trim()).filter(Boolean);
+}
+
 /**
- * Why a dashboard update must not stop and restart this proxy, or null when it may (#7967).
+ * Why a dashboard update must not run against this proxy, or null when it may (#7967).
  *
- * Under systemd (`INVOCATION_ID` set) the worker survives the service stop only from its own
- * transient scope, and only OpenCodex's own user unit is restarted by the updater. A proxy run by
- * any other unit -- a custom system service with `User=`, for example -- would lose the worker
- * with its cgroup, and the restart would target an unrelated, possibly inactive user unit. Both
- * refuse before any package mutation; outside systemd nothing changes.
+ * A dashboard update stops the proxy before it replaces the package, with or without a requested
+ * restart, and the worker survives that stop only from its own transient scope. Only OpenCodex's
+ * own user unit is restarted by the updater. A proxy inside any systemd service -- detected from
+ * `INVOCATION_ID` or from a `.service` cgroup, so a unit that unsets the variable is still seen
+ * -- is therefore refused unless the scope launcher works and the cgroup places it in
+ * `<unitName>.service` under a per-user manager (a delegated child cgroup below it is fine). A
+ * custom system unit with `User=` would lose the worker with its cgroup, and the restart would aim
+ * at an unrelated, possibly inactive user unit. Outside systemd nothing changes.
  */
 export function dashboardRestartRefusal(context: DashboardRestartContext): string | null {
   const platform = context.platform ?? process.platform;
   const env = context.env ?? process.env;
-  if (platform !== "linux" || !env.INVOCATION_ID) return null;
-  const manual = "Update without restart, or run `ocx update` from a shell, then restart the service yourself.";
-  if (!context.systemdRun) {
-    return `Dashboard restart is unavailable: this proxy runs under systemd, but the update worker cannot leave the service's cgroup (no usable \`systemd-run --user --scope\`), so stopping the service would stop the update too. ${manual}`;
-  }
-  let cgroup: string;
+  if (platform !== "linux") return null;
+  let cgroup: string | null;
   try { cgroup = (context.readCgroup ?? (() => readFileSync("/proc/self/cgroup", "utf8")))(); }
-  catch { cgroup = ""; }
-  const ownUnit = `/${context.unitName}.service`;
-  const managedByOwnUnit = cgroup.split("\n").some(line => {
-    const path = line.slice(line.lastIndexOf(":") + 1).trim();
-    return path.endsWith(ownUnit) && path.includes("/user@");
+  catch { cgroup = null; }
+  const paths = cgroup === null ? [] : cgroupPaths(cgroup);
+  const inService = Boolean(env.INVOCATION_ID) || paths.some(path => path.split("/").some(part => part.endsWith(".service")));
+  if (!inService) return null;
+  const manual = "Stop the service with its own manager, update the package from a shell (for example `ocx update`), then start the service again.";
+  if (!context.systemdRun || !env.INVOCATION_ID) {
+    return `Dashboard update is unavailable: this proxy runs inside a systemd service, and the update worker cannot leave the service's cgroup (no usable \`systemd-run --user --scope\`), so stopping the proxy for the update would stop the update too. ${manual}`;
+  }
+  const managedByOwnUnit = paths.some(path => {
+    const parts = path.split("/");
+    const unit = parts.indexOf(`${context.unitName}.service`);
+    return unit > 0 && parts.slice(0, unit).some(part => part.startsWith("user@") && part.endsWith(".service"));
   });
   if (!managedByOwnUnit) {
-    return `Dashboard restart is unavailable: this proxy runs under a systemd unit that is not OpenCodex's own \`${context.unitName}.service\` user unit, so the updater cannot restart it safely. ${manual}`;
+    return `Dashboard update is unavailable: this proxy runs under a systemd unit that is not OpenCodex's own \`${context.unitName}.service\` user unit, so the updater can neither keep its worker alive nor restart that unit safely. ${manual}`;
   }
   return null;
 }

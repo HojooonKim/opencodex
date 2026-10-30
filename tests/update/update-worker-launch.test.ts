@@ -246,10 +246,12 @@ describe("dashboard restart supervisor check", () => {
   const userUnit = `0::/user.slice/user-1000.slice/${manager}/app.slice/opencodex-proxy.service\n`;
   const base = { platform: "linux" as const, env: { INVOCATION_ID: "abc" }, systemdRun: "/usr/bin/systemd-run", unitName: "opencodex-proxy" };
 
-  test("OpenCodex's own user unit with a usable scope may restart", () => {
+  test("OpenCodex's own user unit with a usable scope may update", () => {
     expect(dashboardRestartRefusal({ ...base, readCgroup: () => userUnit })).toBeNull();
     // cgroup v1 lists the systemd hierarchy beside controller lines.
     expect(dashboardRestartRefusal({ ...base, readCgroup: () => `4:memory:/user.slice\n1:name=systemd:/user.slice/user-1000.slice/${manager}/app.slice/opencodex-proxy.service\n` })).toBeNull();
+    // A delegated child cgroup below the unit is still that unit.
+    expect(dashboardRestartRefusal({ ...base, readCgroup: () => `0::/user.slice/user-1000.slice/${manager}/app.slice/opencodex-proxy.service/payload\n` })).toBeNull();
   });
 
   test("a custom system unit is refused even when it reuses the unit name", () => {
@@ -257,6 +259,7 @@ describe("dashboard restart supervisor check", () => {
       "0::/system.slice/opencodex.service\n",
       "0::/system.slice/opencodex-proxy.service\n",
       `0::/user.slice/user-1000.slice/${manager}/app.slice/other.service\n`,
+      `0::/user.slice/user-1000.slice/${manager}/app.slice/not-opencodex-proxy.service\n`,
       "",
     ]) {
       expect(dashboardRestartRefusal({ ...base, readCgroup: () => cgroup })).toContain("not OpenCodex's own");
@@ -266,11 +269,14 @@ describe("dashboard restart supervisor check", () => {
 
   test("no usable scope launcher under systemd is refused", () => {
     expect(dashboardRestartRefusal({ ...base, systemdRun: undefined, readCgroup: () => userUnit })).toContain("cannot leave the service's cgroup");
+    // A unit that unsets INVOCATION_ID is still found from its .service cgroup.
+    expect(dashboardRestartRefusal({ ...base, env: {}, readCgroup: () => "0::/system.slice/opencodex.service\n" })).toContain("cannot leave the service's cgroup");
   });
 
   test("outside systemd or off Linux nothing changes", () => {
     const unread = () => { throw new Error("must not read the cgroup"); };
-    expect(dashboardRestartRefusal({ ...base, env: {}, systemdRun: undefined, readCgroup: unread })).toBeNull();
+    expect(dashboardRestartRefusal({ ...base, env: {}, systemdRun: undefined, readCgroup: () => "0::/user.slice/user-1000.slice/session-3.scope\n" })).toBeNull();
+    expect(dashboardRestartRefusal({ ...base, env: {}, systemdRun: undefined, readCgroup: () => { throw new Error("no proc"); } })).toBeNull();
     expect(dashboardRestartRefusal({ ...base, platform: "darwin", systemdRun: undefined, readCgroup: unread })).toBeNull();
   });
 });

@@ -544,11 +544,13 @@ export function readUpdateJobSettlingStale(
   if (!reason) return job;
   const current = readUpdateJob(jobId);
   if (!current || current.id !== job.id || current.pid !== job.pid || current.status !== job.status) return current;
-  return updateJob(
-    current,
-    { status: "failed", error: `Update worker stopped before finishing: ${reason}.`, exitCode: null },
-    `Update worker stopped before finishing: ${reason}.`,
-  );
+  // Built from the record just compared, not via updateJob: its by-id re-read falls back to the
+  // caller's copy when the record was replaced, which would write this job over the new one.
+  const line = `Update worker stopped before finishing: ${reason}.`;
+  const next: UpdateJobState = { ...current, status: "failed", error: line, exitCode: null,
+    updatedAt: new Date(now).toISOString(), log: [...current.log, line] };
+  writeJob(next);
+  return next;
 }
 
 /**

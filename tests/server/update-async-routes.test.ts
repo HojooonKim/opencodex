@@ -1,10 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import { handleManagementAPI } from "../../src/server/management-api";
 import type { ManagementApiDeps } from "../../src/server/management/context";
 import type { OcxConfig } from "../../src/types";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import * as updateJobModule from "../../src/update/job";
 import { updateJobPath } from "../../src/update/job";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
@@ -76,19 +77,25 @@ describe("dashboard update restart supervision (#7967)", () => {
     command: "npm install -g @bitkyc08/opencodex@2.7.44", releaseNotesUrl: "https://example.test/releases",
   });
 
-  test("a refused supervisor answers 409 before any update job starts", async () => {
+  test.each([true, false])("a refused supervisor answers 409 before any update job starts (restart=%p)", async restart => {
     const home = mkdtempSync(join(tmpdir(), "ocx-update-supervisor-"));
     const previous = process.env.OPENCODEX_HOME;
     process.env.OPENCODEX_HOME = home;
+    // Hard barriers: a regression must fail here, never launch a real updater.
+    const start = spyOn(updateJobModule, "startUpdateJob").mockImplementation(() => { throw new Error("must not start a job"); });
+    const spawn = spyOn(updateJobModule, "spawnGuiUpdateWorker").mockImplementation(() => { throw new Error("must not spawn a worker"); });
     try {
-      const response = await call("POST", "/api/update/run", { tag: "latest", restart: true }, {
+      const response = await call("POST", "/api/update/run", { tag: "latest", restart }, {
         checkPackageUpdate: available,
-        dashboardRestartRefusal: () => "Dashboard restart is unavailable: fixture",
+        dashboardRestartRefusal: () => "Dashboard update is unavailable: fixture",
       });
       expect(response?.status).toBe(409);
-      expect(await response!.json()).toEqual({ error: "Dashboard restart is unavailable: fixture", code: "update_restart_unsupervised" });
+      expect(await response!.json()).toEqual({ error: "Dashboard update is unavailable: fixture", code: "update_restart_unsupervised" });
+      expect(start).not.toHaveBeenCalled();
+      expect(spawn).not.toHaveBeenCalled();
       expect(existsSync(updateJobPath())).toBe(false);
     } finally {
+      start.mockRestore(); spawn.mockRestore();
       if (previous === undefined) delete process.env.OPENCODEX_HOME; else process.env.OPENCODEX_HOME = previous;
       removeTreeWithRetry(home);
     }
@@ -112,6 +119,33 @@ describe("dashboard update restart supervision (#7967)", () => {
       expect(body.job.status).toBe("failed");
       expect(body.job.error).toContain("is no longer running");
       expect(JSON.parse(readFileSync(updateJobPath(), "utf8")).status).toBe("failed");
+    } finally {
+      if (previous === undefined) delete process.env.OPENCODEX_HOME; else process.env.OPENCODEX_HOME = previous;
+      removeTreeWithRetry(home);
+    }
+  });
+
+  test("settling never overwrites a record replaced after the stale check", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ocx-update-settle-race-"));
+    const previous = process.env.OPENCODEX_HOME;
+    process.env.OPENCODEX_HOME = home;
+    try {
+      const now = new Date().toISOString();
+      const record = (id: string, pid: number) => ({
+        id, status: "running", startedAt: now, updatedAt: now, pid,
+        currentVersion: "2.7.43", latestVersion: "2.7.44", channel: "latest", installer: "npm",
+        restart: true, command: "", releaseNotesUrl: "", log: [],
+      });
+      mkdirSync(dirname(updateJobPath()), { recursive: true });
+      writeFileSync(updateJobPath(), JSON.stringify(record("old-job", 2147483646)));
+      const replacement = JSON.stringify(record("new-job", process.pid));
+      // A new run lands between the stale observation and the write.
+      const settled = updateJobModule.readUpdateJobSettlingStale(null, Date.now(), () => {
+        writeFileSync(updateJobPath(), replacement);
+        return false;
+      });
+      expect(settled?.id).toBe("new-job");
+      expect(readFileSync(updateJobPath(), "utf8")).toBe(replacement);
     } finally {
       if (previous === undefined) delete process.env.OPENCODEX_HOME; else process.env.OPENCODEX_HOME = previous;
       removeTreeWithRetry(home);
