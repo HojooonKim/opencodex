@@ -191,6 +191,48 @@ describe("request-history integrity lifecycle (#7966)", () => {
     expect(released).toBe(true);
   }, 1000);
 
+  test("a verdict arriving after the timeout never changes the generation's state", async () => {
+    for (const lateVerdict of [true, false]) {
+      let clock = 0;
+      const fires: Array<() => void> = [];
+      const answers: Array<(healthy: boolean) => void> = [];
+      const exits: Array<() => void> = [];
+      const monitor = new RequestHistoryIntegrityMonitor({
+        now: () => clock,
+        failureCooldownMs: 100,
+        checkTimeoutMs: 50,
+        scheduleTimeout: callback => { fires.push(callback); return () => {}; },
+        createJob: () => ({
+          check: () => new Promise<boolean>(resolve => { answers.push(resolve); }),
+          dispose: async () => {},
+          afterExit: async (cleanup: () => void) => { exits.push(cleanup); },
+        }),
+      });
+      const handle = {};
+      const first = monitor.inspect(handle, "index.sqlite");
+      if (first.state !== "pending") throw new Error("initial check must be pending");
+      await Promise.resolve();
+      fires[0]!();
+      await first.promise;
+      expect(monitor.inspect(handle, "index.sqlite").state).toBe("unavailable");
+      // The timed-out worker answers late, then exits.
+      answers[0]!(lateVerdict);
+      exits[0]!();
+      for (let turn = 0; turn < 5; turn++) await Promise.resolve();
+      expect(monitor.inspect(handle, "index.sqlite").state).toBe("unavailable");
+      // After the cooldown a fresh check decides, and only its verdict counts.
+      clock = 150;
+      const fresh = monitor.inspect(handle, "index.sqlite");
+      if (fresh.state !== "pending") throw new Error("fresh check must be pending");
+      await Promise.resolve();
+      answers[1]!(true);
+      for (let turn = 0; turn < 5 && !exits[1]; turn++) await Promise.resolve();
+      exits[1]!();
+      await fresh.promise;
+      expect(monitor.inspect(handle, "index.sqlite").state).toBe("ready");
+    }
+  }, 1000);
+
   test("shared async readers leave a silent initial integrity check with a bounded error", async () => {
     await existingIndex();
     let fire!: () => void;
