@@ -1,5 +1,5 @@
 import { probeSpawn, probeSpawnSync } from "./mutation-guard.mjs";
-import { accessSync, constants, realpathSync, statSync } from "node:fs";
+import { accessSync, constants, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, isAbsolute } from "node:path";
 
 /**
@@ -169,6 +169,47 @@ export async function resolveSystemdRunAsync(hooks: SystemdRunHooks = systemdRun
 export function resetSystemdRunProbeForTests(): void {
   systemdRunProbe = undefined;
   systemdRunProbePending = undefined;
+}
+
+export interface DashboardRestartContext {
+  platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
+  /** The resolved scope launcher, or undefined when none is usable. */
+  systemdRun: string | undefined;
+  /** The OpenCodex-managed user unit (`TASK` in src/service/state.ts) without `.service`. */
+  unitName: string;
+  readCgroup?: () => string;
+}
+
+/**
+ * Why a dashboard update must not stop and restart this proxy, or null when it may (#7967).
+ *
+ * Under systemd (`INVOCATION_ID` set) the worker survives the service stop only from its own
+ * transient scope, and only OpenCodex's own user unit is restarted by the updater. A proxy run by
+ * any other unit -- a custom system service with `User=`, for example -- would lose the worker
+ * with its cgroup, and the restart would target an unrelated, possibly inactive user unit. Both
+ * refuse before any package mutation; outside systemd nothing changes.
+ */
+export function dashboardRestartRefusal(context: DashboardRestartContext): string | null {
+  const platform = context.platform ?? process.platform;
+  const env = context.env ?? process.env;
+  if (platform !== "linux" || !env.INVOCATION_ID) return null;
+  const manual = "Update without restart, or run `ocx update` from a shell, then restart the service yourself.";
+  if (!context.systemdRun) {
+    return `Dashboard restart is unavailable: this proxy runs under systemd, but the update worker cannot leave the service's cgroup (no usable \`systemd-run --user --scope\`), so stopping the service would stop the update too. ${manual}`;
+  }
+  let cgroup: string;
+  try { cgroup = (context.readCgroup ?? (() => readFileSync("/proc/self/cgroup", "utf8")))(); }
+  catch { cgroup = ""; }
+  const ownUnit = `/${context.unitName}.service`;
+  const managedByOwnUnit = cgroup.split("\n").some(line => {
+    const path = line.slice(line.lastIndexOf(":") + 1).trim();
+    return path.endsWith(ownUnit) && path.includes("/user@");
+  });
+  if (!managedByOwnUnit) {
+    return `Dashboard restart is unavailable: this proxy runs under a systemd unit that is not OpenCodex's own \`${context.unitName}.service\` user unit, so the updater cannot restart it safely. ${manual}`;
+  }
+  return null;
 }
 
 export function guiUpdateWorkerCommand(

@@ -528,6 +528,30 @@ export function staleActiveUpdateJobReason(
 }
 
 /**
+ * Status read that settles an active record whose worker is gone (#7967). A worker killed with
+ * its service cgroup never writes a terminal state, and the record stayed `running` until the
+ * next update attempt recovered it. The record is re-read right before the write so one
+ * replaced or advanced meanwhile is returned as is, never overwritten.
+ */
+export function readUpdateJobSettlingStale(
+  jobId?: string | null,
+  now = Date.now(),
+  isAlive: (pid: number) => boolean = isProcessAlive,
+): UpdateJobState | null {
+  const job = readUpdateJob(jobId);
+  if (!job) return null;
+  const reason = staleActiveUpdateJobReason(job, now, isAlive);
+  if (!reason) return job;
+  const current = readUpdateJob(jobId);
+  if (!current || current.id !== job.id || current.pid !== job.pid || current.status !== job.status) return current;
+  return updateJob(
+    current,
+    { status: "failed", error: `Update worker stopped before finishing: ${reason}.`, exitCode: null },
+    `Update worker stopped before finishing: ${reason}.`,
+  );
+}
+
+/**
  * Spawn the GUI update worker without inheriting the proxy's LISTEN socket.
  *
  * On Windows, `spawn(..., { detached: true, stdio: "ignore" })` still inherits

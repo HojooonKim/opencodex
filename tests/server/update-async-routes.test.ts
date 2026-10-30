@@ -2,6 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { handleManagementAPI } from "../../src/server/management-api";
 import type { ManagementApiDeps } from "../../src/server/management/context";
 import type { OcxConfig } from "../../src/types";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { updateJobPath } from "../../src/update/job";
+import { removeTreeWithRetry } from "../helpers/remove-tree";
 
 const config = { port: 10100, defaultProvider: "openai", providers: {} } as OcxConfig;
 
@@ -61,5 +66,55 @@ describe("asynchronous package update routes", () => {
     expect(response?.status).toBe(409);
     const body = await response!.json() as Record<string, unknown>;
     expect(body.code).toBe("source_checkout");
+  });
+});
+
+describe("dashboard update restart supervision (#7967)", () => {
+  const available = async (channel: "latest" | "preview") => ({
+    currentVersion: "2.7.43", latestVersion: "2.7.44", channel,
+    installer: "npm" as const, updateAvailable: true, canUpdate: true,
+    command: "npm install -g @bitkyc08/opencodex@2.7.44", releaseNotesUrl: "https://example.test/releases",
+  });
+
+  test("a refused supervisor answers 409 before any update job starts", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ocx-update-supervisor-"));
+    const previous = process.env.OPENCODEX_HOME;
+    process.env.OPENCODEX_HOME = home;
+    try {
+      const response = await call("POST", "/api/update/run", { tag: "latest", restart: true }, {
+        checkPackageUpdate: available,
+        dashboardRestartRefusal: () => "Dashboard restart is unavailable: fixture",
+      });
+      expect(response?.status).toBe(409);
+      expect(await response!.json()).toEqual({ error: "Dashboard restart is unavailable: fixture", code: "update_restart_unsupervised" });
+      expect(existsSync(updateJobPath())).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.OPENCODEX_HOME; else process.env.OPENCODEX_HOME = previous;
+      removeTreeWithRetry(home);
+    }
+  });
+
+  test("status settles an active job whose worker died", async () => {
+    const home = mkdtempSync(join(tmpdir(), "ocx-update-status-"));
+    const previous = process.env.OPENCODEX_HOME;
+    process.env.OPENCODEX_HOME = home;
+    try {
+      const now = new Date().toISOString();
+      mkdirSync(dirname(updateJobPath()), { recursive: true });
+      writeFileSync(updateJobPath(), JSON.stringify({
+        id: "dead-worker", status: "restarting", startedAt: now, updatedAt: now, pid: 2147483646,
+        currentVersion: "2.7.43", latestVersion: "2.7.44", channel: "latest", installer: "npm",
+        restart: true, command: "", releaseNotesUrl: "", log: [],
+      }));
+      const response = await call("GET", "/api/update/status?jobId=dead-worker");
+      expect(response?.status).toBe(200);
+      const body = await response!.json() as { job: { status: string; error?: string } };
+      expect(body.job.status).toBe("failed");
+      expect(body.job.error).toContain("is no longer running");
+      expect(JSON.parse(readFileSync(updateJobPath(), "utf8")).status).toBe("failed");
+    } finally {
+      if (previous === undefined) delete process.env.OPENCODEX_HOME; else process.env.OPENCODEX_HOME = previous;
+      removeTreeWithRetry(home);
+    }
   });
 });

@@ -972,11 +972,19 @@ async function handleConfigRoutesImpl(ctx: ManagementContext): Promise<Response 
       // Resolve the systemd-scope launcher before spawning: the first request
       // would otherwise run up to four sequential five-second probes inside
       // spawnSync on the shared event loop.
-      const { resolveSystemdRunAsync } = await import("../../update/worker-launch");
+      const { resolveSystemdRunAsync, dashboardRestartRefusal } = await import("../../update/worker-launch");
       const systemdRun = process.platform === "linux" && process.env.INVOCATION_ID
         ? await resolveSystemdRunAsync()
         : undefined;
-      return jsonResponse({ ok: true, job: startUpdateJob(channel, body.restart !== false, {
+      const restart = body.restart !== false;
+      if (restart) {
+        // Refuse before any package mutation: a worker that dies with the service cgroup, or a
+        // restart aimed at a unit that does not own this proxy, leaves the dashboard down (#7967).
+        const { TASK } = await import("../../service/state");
+        const refusal = (deps.dashboardRestartRefusal ?? dashboardRestartRefusal)({ systemdRun, unitName: TASK });
+        if (refusal) return jsonResponse({ error: refusal, code: "update_restart_unsupervised" }, 409);
+      }
+      return jsonResponse({ ok: true, job: startUpdateJob(channel, restart, {
         checkForUpdateFn: () => checked,
         spawnWorkerFn: (jobId, runChannel, runRestart) =>
           spawnGuiUpdateWorker(jobId, runChannel, runRestart, { resolveSystemdRun: () => systemdRun }),
@@ -990,8 +998,8 @@ async function handleConfigRoutesImpl(ctx: ManagementContext): Promise<Response 
   }
 
   if (url.pathname === "/api/update/status" && req.method === "GET") {
-    const { readUpdateJob } = await import("../../update/job");
-    const job = readUpdateJob(url.searchParams.get("jobId"));
+    const { readUpdateJobSettlingStale } = await import("../../update/job");
+    const job = readUpdateJobSettlingStale(url.searchParams.get("jobId"));
     if (!job) return jsonResponse({ error: "update job not found" }, 404);
     return jsonResponse({ ok: true, job });
   }
