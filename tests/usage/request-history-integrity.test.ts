@@ -138,6 +138,81 @@ function healthQueryIndex(handle: Database): string {
 }
 
 describe("request-history integrity lifecycle (#7966)", () => {
+  test("a silent scanner times out for readers but retains the replacement barrier", async () => {
+    let clock = 0;
+    let fire: (() => void) | undefined;
+    const exits: Array<() => void> = [];
+    let jobs = 0;
+    let disposals = 0;
+    const monitor = new RequestHistoryIntegrityMonitor({
+      now: () => clock,
+      failureCooldownMs: 100,
+      checkTimeoutMs: 50,
+      scheduleTimeout: (callback: () => void, ms: number) => {
+        expect(ms).toBe(50);
+        fire = callback;
+        return () => { fire = undefined; };
+      },
+      createJob: () => {
+        jobs++;
+        return {
+          check: () => new Promise<boolean>(() => {}),
+          dispose: async () => { disposals++; },
+          afterExit: async (cleanup: () => void) => { exits.push(cleanup); },
+        };
+      },
+    });
+    const handle = {};
+    const first = monitor.inspect(handle, "index.sqlite");
+    if (first.state !== "pending") throw new Error("initial check must be pending");
+    expect(fire).toBeDefined();
+    clock = 50;
+    fire!();
+    await first.promise;
+    expect(disposals).toBe(1);
+    expect(monitor.inspect(handle, "index.sqlite").state).toBe("unavailable");
+    expect(jobs).toBe(1);
+    clock = 150;
+    expect(monitor.inspect(handle, "index.sqlite").state).toBe("pending");
+    expect(jobs).toBe(2);
+    const barrier = monitor.quiesce();
+    expect(barrier).not.toBeNull();
+    let released = false;
+    void barrier!.then(() => { released = true; });
+    await Promise.resolve();
+    expect(released).toBe(false);
+    exits[0]!();
+    await Promise.resolve();
+    expect(released).toBe(false);
+    // Let cancellation schedule the second worker's exit callback.
+    await Promise.resolve();
+    exits[1]!();
+    await barrier;
+    expect(released).toBe(true);
+  }, 1000);
+
+  test("shared async readers leave a silent initial integrity check with a bounded error", async () => {
+    await existingIndex();
+    let fire!: () => void;
+    let started!: () => void;
+    let exit!: () => void;
+    const scheduled = new Promise<void>(resolve => { started = resolve; });
+    setRequestHistoryIntegrityOptionsForTests({
+      scheduleTimeout: callback => { fire = callback; started(); return () => {}; },
+      createJob: () => ({
+        check: () => new Promise<boolean>(() => {}),
+        dispose: async () => {},
+        afterExit: async cleanup => { exit = cleanup; },
+      }),
+    });
+    const first = openRequestHistoryIndex();
+    const second = openRequestHistoryIndex();
+    const errors = Promise.all([first.catch(error => error), second.catch(error => error)]);
+    await scheduled;
+    fire();
+    expect((await errors).every(error => error instanceof RequestHistoryIndexBusyError)).toBe(true);
+    exit();
+  }, 5000);
   test("real worker checks leave repeated page, row, status and routing reads free of full serving-thread scans", async () => {
     await existingIndex();
     const query = spyOn(Database.prototype, "query");
