@@ -7,6 +7,7 @@ import { terminalSafeText } from "./runtime-api";
 
 /** Run one local messaging operation after pure syntax validation, then release owned resources. */
 export async function runMessageCommand(argv: readonly string[], env: NodeJS.ProcessEnv = process.env): Promise<number> {
+  if (argv[0] === "mcp") return (await import("./message-mcp-command")).runMessageMcpCommand(argv.slice(1));
   const remote = parseRemoteMessageArgs(argv);
   if (remote) return (await import("./message-remote-command")).runRemoteMessageCommand(remote, env);
   const args = parseMessageArgs(argv);
