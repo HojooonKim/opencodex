@@ -1,5 +1,7 @@
+import { samePath } from "../helpers/same-path";
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { Database } from "bun:sqlite";
+import * as fs from "node:fs";
 import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,6 +26,7 @@ import {
   setCcSwitchSourceOpenHookForTests,
 } from "../../src/providers/cc-switch-import";
 import { cmdProviderCcSwitchImport } from "../../src/cli/provider-cc-switch-import";
+import { readSourceRows } from "../../src/providers/cc-switch-import-source";
 import { removeTreeWithRetry } from "../helpers/remove-tree";
 
 // Runtime-assembled canary so privacy:scan never sees a literal token prefix in the source file.
@@ -105,6 +108,27 @@ afterEach(async () => {
 });
 
 describe("CC-Switch keyless provider import", () => {
+  test("file identity preserves adjacent NTFS-sized values", () => {
+    const path = join(sourceDir, "source.json");
+    writeFileSync(path, JSON.stringify({ codex: { providers: {} } }));
+    const identity = 9_007_199_254_740_992n;
+    let opening = false;
+    const realLstat = fs.lstatSync, realFstat = fs.fstatSync;
+    const lstat = spyOn(fs, "lstatSync").mockImplementation(((target, options) => {
+      const stat = options?.bigint ? realLstat(target, { bigint: true }) : realLstat(target);
+      return samePath(target, path) ? Object.assign(Object.create(Object.getPrototypeOf(stat)), stat,
+        { ino: options?.bigint ? identity : Number(identity) }) : stat;
+    }) as typeof fs.lstatSync);
+    const fstat = spyOn(fs, "fstatSync").mockImplementation(((fd, options) => {
+      const stat = options?.bigint ? realFstat(fd, { bigint: true }) : realFstat(fd);
+      return opening ? Object.assign(Object.create(Object.getPrototypeOf(stat)), stat,
+        { ino: options?.bigint ? identity + 1n : Number(identity + 1n) }) : stat;
+    }) as typeof fs.fstatSync);
+    setCcSwitchSourceOpenHookForTests(() => { opening = true; });
+    try { expect(() => readSourceRows(path)).toThrow("CC-Switch source file changed while opening."); }
+    finally { fstat.mockRestore(); lstat.mockRestore(); }
+  });
+
   test("SQLite preview and apply strip TOML comments, drop free-text names, keep source read-only, and never materialize secrets", async () => {
     const codexToml = [
       `model = "gpt-5.6-sol" # inline_comment_token = "${CANARY_SECRET}" and ${PREFIXLESS_HEX_SECRET}`,
@@ -827,7 +851,9 @@ describe("CC-Switch keyless provider import", () => {
         id TEXT NOT NULL, app_type TEXT NOT NULL, name TEXT NOT NULL, settings_config TEXT NOT NULL,
         website_url TEXT, notes TEXT, meta TEXT NOT NULL DEFAULT '{}', sort_index INTEGER, PRIMARY KEY (id, app_type)
       )`);
-      db.prepare("INSERT INTO providers (id, app_type, name, settings_config, website_url, notes, meta, sort_index) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)").run(
+      // db.run finalizes its statement; see F3 below for why an unfinalized prepare() breaks cleanup.
+      db.run(
+        "INSERT INTO providers (id, app_type, name, settings_config, website_url, notes, meta, sort_index) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         "dashscope-compat",
         "openai",
         WORD_CANARY,
@@ -852,7 +878,8 @@ describe("CC-Switch keyless provider import", () => {
         "https://api.example.com/v1/%76ioletotter",
         `https://api.example.com/v1?key=${WORD_CANARY}`,
       ].entries()) {
-        db.prepare("INSERT INTO providers (id, app_type, name, settings_config, sort_index) VALUES (?1, ?2, ?3, ?4, ?5)").run(
+        db.run(
+          "INSERT INTO providers (id, app_type, name, settings_config, sort_index) VALUES (?1, ?2, ?3, ?4, ?5)",
           `bad-url-${idx}`,
           "openai",
           WORD_CANARY,
