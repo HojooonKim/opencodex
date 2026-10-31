@@ -53,6 +53,8 @@ rl.on("line", line => {
     if(searching && mode === "reply-none") data=[];
     if(searching && mode === "reply-null") user.item.clientId=null;
     if(searching && mode === "reply-missing-client") delete user.item.clientId;
+    if(mode === "reply-unrelated-missing-client") {delete later.item.clientId;if(searching) data.unshift(later);}
+    if(mode === "reply-invalid-client") {later.item.clientId=42;if(searching) data.unshift(later);}
     if(searching && mode === "reply-ambiguous") data=[user,{...user,item:{...user.item,id:"user-2"}}];
     if(searching && mode === "reply-search-pages" && !f.params.cursor) {data=[later];nextCursor="search-next";}
     if(searching && mode === "reply-cycle") {data=[];nextCursor="cycle";}

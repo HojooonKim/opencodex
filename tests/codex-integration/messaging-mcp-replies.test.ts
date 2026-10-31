@@ -84,13 +84,19 @@ describe.skipIf(process.platform === "win32")("opt-in MCP stored turn replies", 
     } finally { await f.close(); }
   });
 
-  for (const mode of ["reply-none","reply-null"]) test(`${mode}: absence within history is not non-delivery`,async()=>{
+  for (const mode of ["reply-none","reply-null","reply-missing-client"]) test(`${mode}: absence within history is not non-delivery`,async()=>{
     const f=queueMcpFixture(mode);
     try { expect(await queueMcpReadReply({...f.options,allowReplyRead:true},input)).toMatchObject({available:true,status:"not_observed",reachedHistoryEnd:true,replies:[]}); }
     finally {await f.close();}
   });
 
-  for (const mode of ["reply-reject","reply-wrong-turn","reply-missing-client","reply-too-many","reply-bad-turns"]) test(`${mode}: unavailable without private diagnostics`,async()=>{
+  test("unrelated messages without clientId do not hide a matching receipt or its final text",async()=>{
+    const f=queueMcpFixture("reply-unrelated-missing-client");
+    try {expect(await queueMcpReadReply({...f.options,allowReplyRead:true},input)).toMatchObject({available:true,status:"observed",replies:[{itemId:"answer-1",text:"fixture answer"}]});}
+    finally {await f.close();}
+  });
+
+  for (const mode of ["reply-reject","reply-wrong-turn","reply-invalid-client","reply-too-many","reply-bad-turns"]) test(`${mode}: unavailable without private diagnostics`,async()=>{
     const f=queueMcpFixture(mode);
     try { const r=await queueMcpReadReply({...f.options,allowReplyRead:true},input);expect(r.available).toBe(false);expect(JSON.stringify(r)).not.toContain("PRIVATE_"); }
     finally {await f.close();}

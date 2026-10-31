@@ -58,8 +58,10 @@ own state in the selected home; this feature creates no OpenCodex store.
 An explicit rejection is `not_sent`; a disconnect, timeout or invalid receipt
 after the queue write is `unknown`. Never replay an uncertain send. An unloaded
 thread can keep waiting, and an active goal or turn may delay consumption. The
-host does not wake an unloaded thread or read the resulting answer. Verify those
-behaviors in your installed app/CLI combination before relying on delivery.
+host does not wake an unloaded thread. The default queue tools do not read the
+resulting answer; see [Opt-in stored turn replies](#opt-in-stored-turn-replies)
+for explicit answer reading. Verify delivery behavior in your installed app/CLI
+combination before relying on it.
 
 One host allows at most four simultaneous helper calls. Each operation has a
 20-second budget including executable validation, with a 12-second RPC deadline

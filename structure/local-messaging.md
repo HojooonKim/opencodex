@@ -207,7 +207,8 @@ agent text within the selected local-user home, not per-thread authorization.
 Client IDs and cursors are not credentials or delegated permission.
 
 `src/messaging/mcp-reply-tools.ts` searches one descending page of 50 persisted
-items for the exact clientMessageId. Absence is not_observed with a position-scoped
+items for the exact clientMessageId. Omitted or null user client IDs are unrelated
+messages; malformed non-null IDs still fail validation. Absence is not_observed with a position-scoped
 reachedHistoryEnd flag, never proof of non-delivery. Multiple matches in that page
 are ambiguous and expose no text. A match identifies a turn; one ascending page
 of its final_answer agent messages is projected with IDs and turn association.
